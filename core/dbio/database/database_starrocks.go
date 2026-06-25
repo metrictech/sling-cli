@@ -590,13 +590,18 @@ func (conn *StarRocksConn) StreamLoad(feURL, tableFName string, df *iop.Dataflow
 	// timeouts on large chunks. An empty PUT triggers the redirect cheaply.
 	if conn.feHost == "" {
 		probeURL := strings.TrimSuffix(applyCreds(fu.U), "/") + g.F("/api/%s/%s/_stream_load", table.Schema, table.Name)
-		probeResp, _, _ := net.ClientDo(http.MethodPut, probeURL, bytes.NewReader([]byte{}), headers, 10)
-		if probeResp != nil && probeResp.StatusCode >= 300 && probeResp.StatusCode <= 399 {
-			if loc, _ := probeResp.Location(); loc != nil {
-				redirectStr := strings.ReplaceAll(loc.String(), "127.0.0.1", fu.U.Hostname())
-				loc, _ = url.Parse(redirectStr)
-				conn.feHost = loc.Host
-				g.Debug("StarRocks CN discovered via probe: %s", conn.feHost)
+		probeResp, _, probeErr := net.ClientDo(http.MethodPut, probeURL, bytes.NewReader([]byte{}), headers, 10)
+		if probeErr != nil {
+			g.Warn("StarRocks CN probe error: %s", probeErr)
+		} else if probeResp != nil {
+			g.Debug("StarRocks CN probe -> HTTP %d", probeResp.StatusCode)
+			if probeResp.StatusCode >= 300 && probeResp.StatusCode <= 399 {
+				if loc, _ := probeResp.Location(); loc != nil {
+					redirectStr := strings.ReplaceAll(loc.String(), "127.0.0.1", fu.U.Hostname())
+					loc, _ = url.Parse(redirectStr)
+					conn.feHost = loc.Host
+					g.Debug("StarRocks CN discovered via probe: %s", conn.feHost)
+				}
 			}
 		}
 	}
@@ -620,7 +625,6 @@ func (conn *StarRocksConn) StreamLoad(feURL, tableFName string, df *iop.Dataflow
 			// use the redirected CN/BE host:port directly to avoid FE proxy redirect on every chunk
 			apiURL = strings.ReplaceAll(apiURL, fu.U.Host, conn.feHost)
 		}
-
 		resp, respBytes, err := net.ClientDo(http.MethodPut, apiURL, reader, headers, timeout)
 		if resp != nil && resp.StatusCode >= 300 && resp.StatusCode <= 399 {
 			redirectUrl, _ := resp.Location()
